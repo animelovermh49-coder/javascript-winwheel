@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Free Fire Tournament</title>
+  <style>
+    body { font-family: sans-serif; padding: 20px; }
+    .box { border: 1px solid #ccc; padding: 15px; margin-bottom: 20px; }
+    #wheelCanvas { width: 280px; height: 280px; }
+    button { padding: 8px 14px; margin: 5px 0; }
+  </style>
+</head>
+
+<body>
+  <h2>Free Fire Tournament (Starter Build)</h2>
+
+  <!-- LOGIN SECTION -->
+  <div class="box">
+    <h3>Login / Signup</h3>
+    <input id="email" placeholder="Email"><br>
+    <input id="pass" type="password" placeholder="Password"><br>
+    <button onclick="signup()">Signup</button>
+    <button onclick="login()">Login</button>
+    <p id="userStatus"></p>
+  </div>
+
+  <!-- TOKEN WALLET -->
+  <div class="box">
+    <h3>Token Wallet</h3>
+    <p>Tokens: <span id="tokens">0</span></p>
+    <button onclick="addTokens()">Add 10 Tokens (Admin Demo)</button>
+  </div>
+
+  <!-- DAILY SPIN -->
+  <div class="box">
+    <h3>Daily Spin</h3>
+    <canvas id="wheelCanvas" width="300" height="300"></canvas><br>
+    <button onclick="spin()">Spin Now</button>
+    <p id="spinMsg"></p>
+  </div>
+
+  <!-- FIREBASE + JS -->
+  <script src="https://www.gstatic.com/firebasejs/9.0.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.0.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.0.0/firebase-firestore-compat.js"></script>
+
+  <script>
+    // --------------------------- 
+    // 1) YOUR FIREBASE CONFIG
+    // --------------------------- 
+    const firebaseConfig = {
+      apiKey: "YOUR_API_KEY",
+      authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+      projectId: "YOUR_PROJECT_ID",
+      storageBucket: "YOUR_PROJECT_ID.appspot.com",
+      messagingSenderId: "SENDER_ID",
+      appId: "APP_ID"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const auth = firebase.auth();
+    const db = firebase.firestore();
+
+    let currentUser = null;
+
+    // --------------------------- 
+    // AUTH FUNCTIONS
+    // --------------------------- 
+
+    function signup() {
+      const email = document.getElementById("email").value;
+      const pass = document.getElementById("pass").value;
+      auth.createUserWithEmailAndPassword(email, pass)
+        .then(async (cred) => {
+          await db.collection("users").doc(cred.user.uid).set({
+            tokens: 100,       // starter tokens
+            lastSpin: ""       // no spin yet
+          });
+          alert("Signup successful.");
+        })
+        .catch(e => alert(e.message));
+    }
+
+    function login() {
+      const email = document.getElementById("email").value;
+      const pass = document.getElementById("pass").value;
+      auth.signInWithEmailAndPassword(email, pass)
+        .catch(e => alert(e.message));
+    }
+
+    auth.onAuthStateChanged(async (user) => {
+      currentUser = user;
+      if (user) {
+        document.getElementById("userStatus").innerText = "Logged in as: " + user.email;
+
+        // Load user tokens real-time
+        db.collection("users").doc(user.uid)
+          .onSnapshot(doc => {
+            const data = doc.data();
+            document.getElementById("tokens").innerText = data.tokens;
+          });
+
+      } else {
+        document.getElementById("userStatus").innerText = "Not logged in";
+        document.getElementById("tokens").innerText = 0;
+      }
+    });
+
+    // --------------------------- 
+    // TOKEN WALLET
+    // --------------------------- 
+    function addTokens() {
+      if (!currentUser) return alert("Login first.");
+      const ref = db.collection("users").doc(currentUser.uid);
+
+      return db.runTransaction(async (tx) => {
+        const snap = await tx.get(ref);
+        const old = snap.data().tokens || 0;
+        tx.update(ref, { tokens: old + 10 });
+      });
+    }
+
+    // --------------------------- 
+    // SPIN WHEEL (VERY SIMPLE)
+    // --------------------------- 
+
+    // basic segments
+    const prizes = [10, 20, 30, 40, 50, 100];
+    const canvas = document.getElementById("wheelCanvas");
+    const ctx = canvas.getContext("2d");
+
+    // basic draw wheel
+    function drawWheel() {
+      const seg = prizes.length;
+      const angleStep = (2 * Math.PI) / seg;
+
+      for (let i = 0; i < seg; i++) {
+        ctx.beginPath();
+        ctx.moveTo(150,150);
+        ctx.fillStyle = i % 2 === 0 ? "#ffcc66" : "#ff9966";
+        ctx.arc(150, 150, 140, i * angleStep, (i + 1) * angleStep);
+        ctx.fill();
+
+        // text
+        ctx.save();
+        ctx.translate(150,150);
+        ctx.rotate(i * angleStep + angleStep / 2);
+        ctx.fillStyle = "#000";
+        ctx.fillText(prizes[i], 70, 5);
+        ctx.restore();
+      }
+
+      // center circle
+      ctx.beginPath();
+      ctx.arc(150,150,30,0,2*Math.PI);
+      ctx.fillStyle = "#fff";
+      ctx.fill();
+    }
+    drawWheel();
+
+    async function spin() {
+      if (!currentUser) return alert("Login first.");
+
+      const userRef = db.collection("users").doc(currentUser.uid);
+      const userDoc = await userRef.get();
+      const last = userDoc.data().lastSpin;
+
+      const today = new Date().toISOString().split("T")[0];
+      if (last === today) return alert("You already used today's spin.");
+
+      const reward = prizes[Math.floor(Math.random() * prizes.length)];
+
+      await db.runTransaction(async (tx) => {
+        const snap = await tx.get(userRef);
+        const old = snap.data().tokens || 0;
+        tx.update(userRef, {
+          tokens: old + reward,
+          lastSpin: today
+        });
+      });
+
+      document.getElementById("spinMsg").innerText = "You won " + reward + " tokens!";
+    }
+  </script>
+
+</body>
+</html>
